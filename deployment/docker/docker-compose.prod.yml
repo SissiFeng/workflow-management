@@ -1,0 +1,144 @@
+# Production Docker Compose Configuration
+# This file extends the base docker-compose.yml with production-specific settings
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database - Production Configuration
+  database:
+    restart: always
+    environment:
+      POSTGRES_INITDB_ARGS: "-c max_connections=200 -c shared_buffers=512MB -c effective_cache_size=2GB"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Production Configuration
+  redis:
+    restart: always
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend - Production Configuration
+  backend:
+    restart: always
+    environment:
+      - FLASK_ENV=production
+      - LOG_LEVEL=warning
+      - WORKERS=4
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # File Server - Production Configuration
+  file-server:
+    restart: always
+    environment:
+      - NODE_ENV=production
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Frontend - Production Configuration
+  frontend:
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Nginx Reverse Proxy (Optional - for better performance)
+  nginx:
+    image: nginx:alpine
+    container_name: workflow-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - backend
+      - file-server
+    networks:
+      - workflow-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Backup Service (Optional - for automated backups)
+  backup:
+    image: postgres:15-alpine
+    container_name: workflow-backup
+    restart: daily
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+      - ./backup-script.sh:/backup.sh:ro
+    command: /backup.sh
+    depends_on:
+      - database
+    networks:
+      - workflow-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  uploaded_files:
+    driver: local
+
+networks:
+  workflow-network:
+    driver: bridge
+

@@ -1,0 +1,163 @@
+.PHONY: help build up down logs clean rebuild restart ps shell-backend shell-frontend shell-db migrate backup restore
+
+DOCKER_COMPOSE := docker-compose -f deployment/docker/docker-compose.yml
+DOCKER_COMPOSE_PROD := docker-compose -f deployment/docker/docker-compose.yml -f deployment/docker/docker-compose.prod.yml
+
+help:
+	@echo "Workflow Management System - Docker Commands"
+	@echo ""
+	@echo "Development Commands:"
+	@echo "  make build              - Build all Docker images"
+	@echo "  make up                 - Start services in development mode"
+	@echo "  make down               - Stop all services"
+	@echo "  make logs               - View logs from all services"
+	@echo "  make logs-backend       - View backend logs"
+	@echo "  make logs-frontend      - View frontend logs"
+	@echo "  make logs-fileserver    - View file server logs"
+	@echo "  make ps                 - List running containers"
+	@echo ""
+	@echo "Production Commands:"
+	@echo "  make build-prod         - Build images for production"
+	@echo "  make up-prod            - Start services in production mode"
+	@echo "  make down-prod          - Stop production services"
+	@echo ""
+	@echo "Database Commands:"
+	@echo "  make migrate            - Run database migrations"
+	@echo "  make backup             - Backup database"
+	@echo "  make restore            - Restore database from backup"
+	@echo "  make shell-db           - Connect to PostgreSQL shell"
+	@echo ""
+	@echo "Container Commands:"
+	@echo "  make shell-backend      - Open shell in backend container"
+	@echo "  make shell-frontend     - Open shell in frontend container"
+	@echo "  make shell-fileserver   - Open shell in file server container"
+	@echo ""
+	@echo "Maintenance Commands:"
+	@echo "  make clean              - Remove containers and volumes"
+	@echo "  make rebuild            - Rebuild all images"
+	@echo "  make restart            - Restart all services"
+	@echo "  make prune              - Remove unused Docker resources"
+
+# Development Commands
+build:
+	@echo "Building Docker images..."
+	$(DOCKER_COMPOSE) build
+
+up:
+	@echo "Starting services in development mode..."
+	$(DOCKER_COMPOSE) --profile development up -d
+	@echo "Services started. Access them at:"
+	@echo "  Frontend: http://localhost:3000"
+	@echo "  Backend:  http://localhost:8000"
+	@echo "  Files:    http://localhost:3001"
+
+down:
+	@echo "Stopping services..."
+	$(DOCKER_COMPOSE) down
+
+logs:
+	$(DOCKER_COMPOSE) logs -f
+
+logs-backend:
+	$(DOCKER_COMPOSE) logs -f backend
+
+logs-frontend:
+	$(DOCKER_COMPOSE) logs -f frontend-dev
+
+logs-fileserver:
+	$(DOCKER_COMPOSE) logs -f file-server
+
+ps:
+	$(DOCKER_COMPOSE) ps
+
+# Production Commands
+build-prod:
+	@echo "Building Docker images for production..."
+	$(DOCKER_COMPOSE_PROD) build
+
+up-prod:
+	@echo "Starting services in production mode..."
+	$(DOCKER_COMPOSE_PROD) --profile production up -d
+	@echo "Services started. Access them at:"
+	@echo "  Frontend: http://localhost:80"
+	@echo "  Backend:  http://localhost:8000"
+	@echo "  Files:    http://localhost:3001"
+
+down-prod:
+	@echo "Stopping production services..."
+	$(DOCKER_COMPOSE_PROD) down
+
+# Database Commands
+migrate:
+	@echo "Running database migrations..."
+	$(DOCKER_COMPOSE) exec backend python -m backend.main
+
+backup:
+	@echo "Backing up database..."
+	$(DOCKER_COMPOSE) exec database pg_dump -U postgres workflow_management | gzip > backup_$(shell date +%Y%m%d_%H%M%S).sql.gz
+	@echo "Backup completed"
+
+restore:
+	@echo "Restoring database from backup..."
+	@read -p "Enter backup file path: " backup_file; \
+	gunzip -c $$backup_file | $(DOCKER_COMPOSE) exec -T database psql -U postgres workflow_management
+	@echo "Restore completed"
+
+shell-db:
+	$(DOCKER_COMPOSE) exec database psql -U postgres -d workflow_management
+
+# Container Commands
+shell-backend:
+	$(DOCKER_COMPOSE) exec backend bash
+
+shell-frontend:
+	$(DOCKER_COMPOSE) exec frontend-dev sh
+
+shell-fileserver:
+	$(DOCKER_COMPOSE) exec file-server sh
+
+# Maintenance Commands
+clean:
+	@echo "Removing containers and volumes..."
+	$(DOCKER_COMPOSE) down -v
+	@echo "Cleanup completed"
+
+rebuild:
+	@echo "Rebuilding all images..."
+	$(DOCKER_COMPOSE) build --no-cache
+
+restart:
+	@echo "Restarting all services..."
+	$(DOCKER_COMPOSE) restart
+
+prune:
+	@echo "Pruning unused Docker resources..."
+	docker system prune -f
+	@echo "Prune completed"
+
+# Utility Commands
+env-setup:
+	@if [ ! -f .env ]; then \
+		echo "Creating .env file from .env.example..."; \
+		cp .env.example .env; \
+		echo "✓ .env file created. Please update it with your settings."; \
+	else \
+		echo ".env file already exists"; \
+	fi
+
+status:
+	@echo "=== Docker Compose Status ==="
+	$(DOCKER_COMPOSE) ps
+	@echo ""
+	@echo "=== Docker Images ==="
+	docker images | grep workflow
+	@echo ""
+	@echo "=== Docker Volumes ==="
+	docker volume ls | grep workflow
+
+# Development workflow
+dev: env-setup build up logs
+
+# Production workflow
+prod: env-setup build-prod up-prod logs
+
